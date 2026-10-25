@@ -1,10 +1,11 @@
 # ==============================================================================
 # UNIFIED SIMULATION PUBLICATION ENGINE FOR UNIT-RAYLEIGH REGRESSION (URRM)
+# High-Dimensional (p > n) and Multicollinearity Extension (rho = 0, 0.5, 0.8, 0.9, 0.95)
 # Outputs: 5 CSV Tables & 6 Corrected High-Resolution Figures (300 DPI)
-# Directory: C:\Users\Dr. O. J. Obulezi\Documents\R projects\URRM
+# Directory: C:\Users\Dr. O. J. Obulezi\Documents\R projects\URRM-modified
 # ==============================================================================
 
-work_dir <- "C:\\Users\\Dr. O. J. Obulezi\\Documents\\R projects\\URRM"
+work_dir <- "C:\\Users\\Dr. O. J. Obulezi\\Documents\\R projects\\URRM-modified"
 if (!dir.exists(work_dir)) dir.create(work_dir, recursive = TRUE)
 setwd(work_dir)
 
@@ -16,27 +17,24 @@ suppressPackageStartupMessages({
   library(gridExtra)
 })
 
-cat("✓ Working Directory set to:", getwd(), "\n\n")
+cat("✓ Working Directory set and verified at:", getwd(), "\n\n")
 
 # ------------------------------------------------------------------------------
 # 1. CORE URRM MATHEMATICS & LINK FUNCTIONS
 # ------------------------------------------------------------------------------
 
-# Exact Unit-Rayleigh CDF: F(y; mu, tau) = exp( log(tau) * (log(y)/log(mu))^2 )
 pUR <- function(y, mu, tau = 0.5) {
   y <- pmin(pmax(y, 1e-6), 1 - 1e-6)
   mu <- pmin(pmax(mu, 1e-6), 1 - 1e-6)
   exp(log(tau) * (log(y) / log(mu))^2)
 }
 
-# Quantile Function
 qUR <- function(u, mu, tau = 0.5) {
   u <- pmin(pmax(u, 1e-6), 1 - 1e-6)
   mu <- pmin(pmax(mu, 1e-6), 1 - 1e-6)
   exp(log(mu) * sqrt(log(u) / log(tau)))
 }
 
-# Probability Density Function
 dUR <- function(y, mu, tau = 0.5) {
   y <- pmin(pmax(y, 1e-6), 1 - 1e-6)
   mu <- pmin(pmax(mu, 1e-6), 1 - 1e-6)
@@ -88,7 +86,7 @@ get_link_components <- function(y, eta, tau = 0.5, link = "loglog") {
 }
 
 # ------------------------------------------------------------------------------
-# 2. ESTIMATION ALGORITHMS
+# 2. ESTIMATION ALGORITHMS (HD-IURLRE & SPARSE PENALTIES)
 # ------------------------------------------------------------------------------
 
 fit_hd_iurlre <- function(X, y, tau = 0.5, d = 0.3, gamma = 0.1, link = "loglog") {
@@ -98,11 +96,14 @@ fit_hd_iurlre <- function(X, y, tau = 0.5, d = 0.3, gamma = 0.1, link = "loglog"
   u <- t(X) %*% comp$w
   xt_psi_x <- t(X) %*% Psi %*% X
   
-  beta_ridge <- as.vector(solve(xt_psi_x + gamma * diag(p)) %*% u)
-  G <- diag(1 / (diag(xt_psi_x) + 0.1))
-  M_inv <- solve(xt_psi_x + gamma * diag(p))
+  S_gamma_inv <- solve(xt_psi_x + gamma * diag(p))
+  beta_ridge <- as.vector(S_gamma_inv %*% u)
   
-  as.vector(M_inv %*% (xt_psi_x + d * G) %*% beta_ridge)
+  diag_vals <- diag(xt_psi_x) + 0.1
+  G <- diag(1 / diag_vals)
+  
+  S_lambda_inv <- solve(xt_psi_x + 0.1 * diag(p))
+  as.vector(S_lambda_inv %*% (xt_psi_x + d * G) %*% beta_ridge)
 }
 
 soft_threshold <- function(z, g) sign(z) * max(0, abs(z) - g)
@@ -141,48 +142,68 @@ fit_hd_penalized <- function(X, y, tau = 0.5, lambda = 0.02, alpha = 0.5,
 }
 
 fit_urrm <- function(X, y, link = "loglog", method = "scad", tau = 0.5, lambda = 0.02) {
-  if (method == "iurlre") {
+  if (method == "iurlre" || method == "HD-IURLRE") {
     fit_hd_iurlre(X, y, tau = tau, link = link)
   } else {
-    fit_hd_penalized(X, y, tau = tau, lambda = lambda, penalty = method, link = link)
+    fit_hd_penalized(X, y, tau = tau, lambda = lambda, penalty = tolower(method), link = link)
   }
 }
 
 # ------------------------------------------------------------------------------
-# 3. MONTE CARLO SIMULATION (GENERATING TABLES 1, 2, 3)
+# 3. EXPANDED MONTE CARLO SIMULATION WITH MULTICOLLINEARITY (RHO = 0 to 0.95)
 # ------------------------------------------------------------------------------
 set.seed(2026)
-n_samples <- 100
-p_features <- 20
 tau_level <- 0.5
 n_replications <- 10
 
-beta_true <- c(0.8, -0.6, 0.5, -0.4, rep(0, p_features - 4))
-links <- c("loglog", "logit", "probit", "cauchy")
-estimators <- c("iurlre", "lasso", "enet", "scad")
+scenarios <- list(
+  "Low_Dim"  = list(n = 100, p = 20, s = 4),
+  "High_Dim" = list(n = 50,  p = 100, s = 4)
+)
 
-sim_results <- expand.grid(Replication = 1:n_replications, Link = links, Estimator = estimators, stringsAsFactors = FALSE)
-sim_results$MSE <- 0
-sim_results$Bias <- 0
-sim_results$Active <- 0
-sim_results$TPR <- 0
-sim_results$FPR <- 0
-sim_results$Time_ms <- 0
+rhos <- c(0.00, 0.50, 0.80, 0.90, 0.95)
+links <- c("loglog", "logit", "probit", "cauchy")
+estimators <- c("HD-IURLRE", "lasso", "enet", "scad")
+
+sim_grid <- expand.grid(
+  Scenario = names(scenarios),
+  Rho = rhos,
+  Replication = 1:n_replications,
+  Link = links,
+  Estimator = estimators,
+  stringsAsFactors = FALSE
+)
+
+sim_results <- sim_grid %>%
+  mutate(MSE = 0, Bias = 0, Active = 0, TPR = 0, FPR = 0, Time_ms = 0)
 
 cat("==============================================================================\n")
-cat("EXECUTING MONTE CARLO SIMULATION SUITE...\n")
+cat("EXECUTING MULTICOLLINEAR EXPERIMENTAL SUITE (RHO = 0, 0.5, 0.8, 0.9, 0.95)...\n")
 cat("==============================================================================\n")
 
 total_tasks <- nrow(sim_results)
 for (i in 1:total_tasks) {
-  r <- sim_results$Replication[i]
+  sc_name <- sim_results$Scenario[i]
+  sc <- scenarios[[sc_name]]
+  n_samples <- sc$n
+  p_features <- sc$p
+  r_val <- sim_results$Rho[i]
+  
+  rep_idx <- sim_results$Replication[i]
   l <- sim_results$Link[i]
   m <- sim_results$Estimator[i]
   
-  cat(sprintf("\r Progress: [%d/%d] | Rep: %d | Link: %-6s | Method: %-6s", i, total_tasks, r, l, m))
+  cat(sprintf("\r Progress: [%d/%d] | Scen: %-8s | Rho: %.2f | Link: %-6s | Method: %-6s", 
+              i, total_tasks, sc_name, r_val, l, m))
   flush.console()
   
-  X_raw <- matrix(rnorm(n_samples * p_features), nrow = n_samples, ncol = p_features)
+  beta_true <- c(0.8, -0.6, 0.5, -0.4, rep(0, p_features - 4))
+  
+  # Generate Toeplitz Covariance Matrix for Multicollinearity
+  Sigma <- r_val ^ abs(outer(1:p_features, 1:p_features, "-"))
+  L_mat <- chol(Sigma)
+  Z_raw <- matrix(rnorm(n_samples * p_features), nrow = n_samples, ncol = p_features)
+  X_raw <- Z_raw %*% L_mat
   X_sim <- scale(X_raw) / sqrt(p_features)
   
   mu_sim <- compute_mu(as.vector(X_sim %*% beta_true), link = l)
@@ -200,44 +221,40 @@ for (i in 1:total_tasks) {
   sim_results$Time_ms[i] <- as.numeric(difftime(t_end, t_start, units = "secs")) * 1000
 }
 
-cat("\n\n✓ Monte Carlo Simulations Completed!\n\n")
+cat("\n\n✓ Multicollinearity Monte Carlo Simulations Completed!\n\n")
 
 # ------------------------------------------------------------------------------
-# 4. EXPORT ALL 5 TABLES
+# 4. EXPORT ALL 5 CSV TABLES (ORIGINAL FILENAMES PRESERVED)
 # ------------------------------------------------------------------------------
 
-# Table 1: Parameter Estimation Accuracy & Bias
 table_1 <- sim_results %>%
-  group_by(Link, Estimator) %>%
+  group_by(Scenario, Rho, Link, Estimator) %>%
   summarise(Mean_MSE = round(mean(MSE), 4), SD_MSE = round(sd(MSE), 4), Mean_Bias = round(mean(Bias), 4), .groups = "drop")
 write.csv(table_1, "Table_1_Parameter_Estimation_Bias.csv", row.names = FALSE)
 
-# Table 2: Feature Selection Metrics
 table_2 <- sim_results %>%
-  group_by(Link, Estimator) %>%
+  group_by(Scenario, Rho, Link, Estimator) %>%
   summarise(Avg_Active = round(mean(Active), 2), TPR = round(mean(TPR), 3), FPR = round(mean(FPR), 3), .groups = "drop")
 write.csv(table_2, "Table_2_Feature_Selection_Performance.csv", row.names = FALSE)
 
-# Table 3: Numerical Efficiency
 table_3 <- sim_results %>%
-  group_by(Link, Estimator) %>%
+  group_by(Scenario, Rho, Link, Estimator) %>%
   summarise(Avg_Time_ms = round(mean(Time_ms), 2), SD_Time_ms = round(sd(Time_ms), 2), .groups = "drop")
 write.csv(table_3, "Table_3_Numerical_Efficiency.csv", row.names = FALSE)
 
-# Table 4: Simulation Design & Response Summary
 set.seed(2026)
-X_bench_raw <- matrix(rnorm(100 * 20), 100, 20)
-X_bench <- scale(X_bench_raw) / sqrt(20)
-b_bench_true <- c(0.8, -0.6, 0.5, -0.4, rep(0, 16))
-y_bench <- qUR(runif(100), compute_mu(as.vector(X_bench %*% b_bench_true), "loglog"), tau = 0.5)
+Sigma_hd <- 0.80 ^ abs(outer(1:100, 1:100, "-"))
+X_hd_raw <- matrix(rnorm(50 * 100), 50, 100) %*% chol(Sigma_hd)
+X_hd <- scale(X_hd_raw) / sqrt(100)
+b_hd_true <- c(0.8, -0.6, 0.5, -0.4, rep(0, 96))
+y_hd <- qUR(runif(50), compute_mu(as.vector(X_hd %*% b_hd_true), "loglog"), tau = 0.5)
 
 table_4 <- data.frame(
-  Metric = c("Sample Size (n)", "Features (p)", "Signal Predictors", "Response Mean", "Response SD", "Response Median", "Response Min", "Response Max"),
-  Value = c(100, 20, 4, round(mean(y_bench), 4), round(sd(y_bench), 4), round(median(y_bench), 4), round(min(y_bench), 4), round(max(y_bench), 4))
+  Metric = c("Sample Size (n)", "Features (p)", "Signal Predictors", "Multicollinearity Levels (rho)", "Response Mean", "Response SD", "Response Median", "Response Min", "Response Max"),
+  Value = c("50", "100", "4", "0.00, 0.50, 0.80, 0.90, 0.95", round(mean(y_hd), 4), round(sd(y_hd), 4), round(median(y_hd), 4), round(min(y_hd), 4), round(max(y_hd), 4))
 )
 write.csv(table_4, "Table_4_Simulation_Design_Summary.csv", row.names = FALSE)
 
-# Table 5: 16-Model Selection Grid
 table_5_grid <- expand.grid(Link = links, Estimator = estimators, stringsAsFactors = FALSE)
 table_5_grid$LogLik <- 0
 table_5_grid$AIC <- 0
@@ -250,16 +267,16 @@ for (i in 1:nrow(table_5_grid)) {
   l <- table_5_grid$Link[i]
   m <- table_5_grid$Estimator[i]
   
-  b_hat <- fit_urrm(X_bench, y_bench, link = l, method = m, tau = 0.5, lambda = 0.02)
-  mu_hat <- compute_mu(as.vector(X_bench %*% b_hat), link = l)
+  b_hat <- fit_urrm(X_hd, y_hd, link = l, method = m, tau = 0.5, lambda = 0.02)
+  mu_hat <- compute_mu(as.vector(X_hd %*% b_hat), link = l)
   
-  ll <- logLik_UR(y_bench, mu_hat, tau = 0.5)
+  ll <- logLik_UR(y_hd, mu_hat, tau = 0.5)
   df <- max(sum(b_hat != 0), 1)
   
   table_5_grid$LogLik[i]    <- round(ll, 2)
   table_5_grid$AIC[i]       <- round(-2 * ll + 2 * df, 2)
-  table_5_grid$BIC[i]       <- round(-2 * ll + df * log(100), 2)
-  table_5_grid$HQIC[i]      <- round(-2 * ll + 2 * df * log(log(100)), 2)
+  table_5_grid$BIC[i]       <- round(-2 * ll + df * log(50), 2)
+  table_5_grid$HQIC[i]      <- round(-2 * ll + 2 * df * log(log(50)), 2)
   table_5_grid$Deviance[i]  <- round(-2 * ll, 2)
   table_5_grid$Active_df[i] <- df
 }
@@ -267,48 +284,57 @@ for (i in 1:nrow(table_5_grid)) {
 table_5_grid <- table_5_grid %>% arrange(AIC)
 write.csv(table_5_grid, "Table_5_Simulation_Model_Selection_Criteria.csv", row.names = FALSE)
 
-cat("✓ All 5 CSV Tables successfully generated.\n\n")
+cat("✓ All 5 CSV Tables successfully saved with original filenames.\n\n")
 
 # ------------------------------------------------------------------------------
-# 5. GENERATE ALL 6 PUBLICATION FIGURES
+# 5. GENERATE HIGH-RESOLUTION PNG FIGURES (ORIGINAL FILENAMES, NO MAIN TITLES)
 # ------------------------------------------------------------------------------
 
-cat("Generating All 6 High-Resolution PNG Figures...\n")
-
-# FIGURE 1: MSE Boxplots
-f1 <- ggplot(sim_results, aes(x = Estimator, y = MSE, fill = Estimator)) +
-  geom_boxplot(alpha = 0.8, outlier.size = 1) +
+# FIGURE 1: MSE Boxplots across Multicollinearity Levels
+f1 <- ggplot(sim_results %>% filter(Scenario == "High_Dim"), aes(x = factor(Rho), y = MSE, fill = Estimator)) +
+  geom_boxplot(alpha = 0.8, outlier.size = 0.8) +
   facet_wrap(~ Link, scales = "free_y") +
-  theme_bw() + labs(title = "Figure 1: Simulation MSE Performance Across Link Functions", y = "Mean Squared Error")
-ggsave("Figure_1_MSE_Performance.png", f1, width = 9, height = 6, dpi = 300)
+  theme_bw() + labs(title = NULL, x = "Multicollinearity Level (Rho)", y = "Mean Squared Error")
+ggsave("Figure_1_MSE_Performance.png", f1, width = 10, height = 6.5, dpi = 300)
 
-# FIGURE 2: SCAD Regularization Path
+# FIGURE 2: SCAD Regularization Paths for ALL 100 Features (p = 100 > n = 50, rho = 0.80)
 lambdas <- exp(seq(log(0.001), log(0.15), length.out = 25))
 path_list <- list()
 for (idx in length(lambdas):1) {
   l_val <- lambdas[idx]
-  b_curr <- fit_hd_penalized(X_bench, y_bench, tau = 0.5, lambda = l_val, penalty = "scad", link = "loglog")
-  path_list[[idx]] <- data.frame(Lambda = l_val, Beta = b_curr[1:5], Feature = paste0("X", 1:5))
+  b_curr <- fit_hd_penalized(X_hd, y_hd, tau = 0.5, lambda = l_val, penalty = "scad", link = "loglog")
+  
+  temp_df <- data.frame(
+    Lambda = l_val, 
+    Beta = b_curr, 
+    FeatureID = 1:100,
+    Type = ifelse(1:100 <= 4, paste0("Signal (X", 1:100, ")"), "Noise (X5-X100)")
+  )
+  path_list[[idx]] <- temp_df
 }
 path_df <- do.call(rbind, path_list)
 
-f2 <- ggplot(path_df, aes(x = Lambda, y = Beta, color = Feature)) +
-  geom_line(size = 1.1) + scale_x_log10() + theme_bw() +
-  labs(title = "Figure 2: SCAD Regularization Paths for Top Predictors", x = "Penalty Parameter Log(Lambda)", y = "Estimated Beta")
-ggsave("Figure_2_Regularization_Paths.png", f2, width = 8, height = 5, dpi = 300)
+f2 <- ggplot(path_df, aes(x = Lambda, y = Beta, group = FeatureID, color = Type, alpha = Type)) +
+  geom_line(aes(size = Type)) + 
+  scale_x_log10() + 
+  scale_color_manual(values = c("Signal (X1)" = "#E41A1C", "Signal (X2)" = "#377EB8", 
+                                "Signal (X3)" = "#4DAF4A", "Signal (X4)" = "#984EA3", 
+                                "Noise (X5-X100)" = "grey70")) +
+  scale_alpha_manual(values = c("Signal (X1)" = 1, "Signal (X2)" = 1, 
+                                "Signal (X3)" = 1, "Signal (X4)" = 1, 
+                                "Noise (X5-X100)" = 0.35)) +
+  scale_size_manual(values = c("Signal (X1)" = 1.1, "Signal (X2)" = 1.1, 
+                               "Signal (X3)" = 1.1, "Signal (X4)" = 1.1, 
+                               "Noise (X5-X100)" = 0.4)) +
+  theme_bw() +
+  labs(title = NULL, x = "Penalty Parameter Log(Lambda)", y = "Estimated Beta (100 Features)", color = "Feature Group")
+ggsave("Figure_2_Regularization_Paths.png", f2, width = 8.5, height = 4.8, dpi = 300)
 
-# FIGURE 3: PERFECTLY CONDITIONED RESIDUAL DIAGNOSTICS
-nll_urrm <- function(beta, X, y, link = "loglog", tau = 0.5) {
-  eta <- as.vector(X %*% beta)
-  mu <- compute_mu(eta, link)
-  -sum(log(dUR(y, mu, tau = tau)))
-}
+# FIGURE 3: RESIDUAL DIAGNOSTICS (High-Dimensional Multicollinear Regime)
+b_hd_iurlre <- fit_hd_iurlre(X_hd, y_hd, tau = 0.5, link = "loglog")
+mu_diag <- compute_mu(as.vector(X_hd %*% b_hd_iurlre), link = "loglog")
 
-fit_mle <- optim(par = rep(0, 20), fn = nll_urrm, X = X_bench, y = y_bench, 
-                 link = "loglog", tau = 0.5, method = "BFGS")
-mu_diag <- compute_mu(as.vector(X_bench %*% fit_mle$par), link = "loglog")
-
-u_cdf <- pUR(y_bench, mu_diag, tau = 0.5)
+u_cdf <- pUR(y_hd, mu_diag, tau = 0.5)
 u_cdf <- pmin(pmax(u_cdf, 0.001), 0.999)
 rq_residuals <- qnorm(u_cdf)
 
@@ -320,31 +346,31 @@ p_res1 <- ggplot(df_diag, aes(x = Fitted, y = RQ_Residuals)) +
   geom_smooth(method = "loess", color = "darkorange", se = FALSE, size = 0.8) +
   coord_cartesian(ylim = c(-3, 3)) +
   theme_bw() + 
-  labs(title = "Randomized Quantile Residuals vs Fitted", x = "Fitted Values (mu)", y = "Quantile Residuals")
+  labs(title = NULL, x = "Fitted Values (mu)", y = "Quantile Residuals")
 
 p_res2 <- ggplot(df_diag, aes(sample = RQ_Residuals)) +
   stat_qq(color = "#1e7145", size = 2, alpha = 0.8) + 
   stat_qq_line(color = "red", size = 0.8) +
   coord_cartesian(ylim = c(-3, 3)) +
   theme_bw() + 
-  labs(title = "Normal Q-Q Plot", x = "Theoretical Quantiles", y = "Sample Quantiles")
+  labs(title = NULL, x = "Theoretical Quantiles", y = "Sample Quantiles")
 
 f3 <- grid.arrange(p_res1, p_res2, ncol = 2)
-ggsave("Figure_3_Residual_Diagnostics.png", f3, width = 10, height = 4.5, dpi = 300)
+ggsave("Figure_3_Residual_Diagnostics.png", f3, width = 10, height = 4.2, dpi = 300)
 
-# FIGURE 4: Leverage & Influence
-H <- X_bench %*% solve(t(X_bench) %*% X_bench + 0.1 * diag(20)) %*% t(X_bench)
+# FIGURE 4: Leverage & Influence (p = 100, n = 50, rho = 0.80)
+H <- X_hd %*% solve(t(X_hd) %*% X_hd + 0.1 * diag(100)) %*% t(X_hd)
 lev <- diag(H)
-cooks <- (rq_residuals^2 / 20) * (lev / (1 - lev)^2)
+cooks <- (rq_residuals^2 / 100) * (lev / (1 - lev)^2)
 
-f4_df <- data.frame(Index = 1:100, Leverage = lev, Cooks_D = cooks)
-p_inf1 <- ggplot(f4_df, aes(x = Index, y = Leverage)) + geom_segment(aes(xend = Index, yend = 0)) + geom_point(color = "blue") + theme_bw() + labs(title = "Leverage (h_ii)")
-p_inf2 <- ggplot(f4_df, aes(x = Index, y = Cooks_D)) + geom_segment(aes(xend = Index, yend = 0)) + geom_point(color = "darkred") + theme_bw() + labs(title = "Cook's Distance")
+f4_df <- data.frame(Index = 1:50, Leverage = lev, Cooks_D = cooks)
+p_inf1 <- ggplot(f4_df, aes(x = Index, y = Leverage)) + geom_segment(aes(xend = Index, yend = 0)) + geom_point(color = "blue") + theme_bw() + labs(title = NULL, x = "Observation Index", y = "Leverage (h_ii)")
+p_inf2 <- ggplot(f4_df, aes(x = Index, y = Cooks_D)) + geom_segment(aes(xend = Index, yend = 0)) + geom_point(color = "darkred") + theme_bw() + labs(title = NULL, x = "Observation Index", y = "Cook's Distance")
 f4 <- grid.arrange(p_inf1, p_inf2, ncol = 2)
-ggsave("Figure_4_Leverage_CooksD.png", f4, width = 10, height = 4.5, dpi = 300)
+ggsave("Figure_4_Leverage_CooksD.png", f4, width = 10, height = 4.2, dpi = 300)
 
-# FIGURE 5: CORRECTED PAIRED SIMULATION FIT
-f5_df <- data.frame(Fitted = mu_diag, Observed = y_bench) %>%
+# FIGURE 5: PAIRED SIMULATION FIT (p > n, rho = 0.80)
+f5_df <- data.frame(Fitted = mu_diag, Observed = y_hd) %>%
   arrange(Fitted) %>%
   mutate(Obs = 1:n())
 
@@ -353,16 +379,16 @@ f5 <- ggplot(f5_df, aes(x = Obs)) +
   geom_line(aes(y = Fitted, color = "URRM Fitted Mu"), size = 1.2) +
   scale_color_manual(values = c("Simulated Response (y)" = "#f8766d", "URRM Fitted Mu" = "#00bfc4")) +
   theme_bw() + 
-  labs(title = "Figure 5: Model Fit vs Generated Bounded Response", 
-       x = "Observation Index (Ordered by Fitted Values)", y = "Response (y)", color = "Legend")
-ggsave("Figure_5_Empirical_Fit.png", f5, width = 8, height = 5, dpi = 300)
+  labs(title = NULL, x = "Observation Index (Ordered by Fitted Values)", y = "Response (y)", color = "Legend")
+ggsave("Figure_5_Empirical_Fit.png", f5, width = 8, height = 4.8, dpi = 300)
 
-# FIGURE 6: Computation Time Efficiency
+# FIGURE 6: Computation Time Efficiency across Regimes
 f6 <- ggplot(sim_results, aes(x = Estimator, y = Time_ms, fill = Link)) +
   geom_bar(stat = "summary", fun = "mean", position = "dodge") +
-  theme_bw() + labs(title = "Figure 6: Execution Time Efficiency (Milliseconds)", y = "Time (ms)")
-ggsave("Figure_6_Computation_Efficiency.png", f6, width = 8, height = 5, dpi = 300)
+  facet_wrap(~ Scenario, scales = "free_y") +
+  theme_bw() + labs(title = NULL, y = "Execution Time (ms)", x = "Estimator")
+ggsave("Figure_6_Computation_Efficiency.png", f6, width = 9, height = 4.8, dpi = 300)
 
 cat("\n==============================================================================\n")
-cat("SUCCESS! All 5 CSV Tables & 6 Figures Saved in Directory:\n", getwd(), "\n")
+cat("SUCCESS! Multicollinearity Simulation Complete.\n")
 cat("==============================================================================\n")
