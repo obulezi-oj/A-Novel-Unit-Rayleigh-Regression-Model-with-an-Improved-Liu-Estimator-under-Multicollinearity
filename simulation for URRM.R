@@ -1,9 +1,6 @@
 # ==============================================================================
-# UNIFIED SIMULATION PUBLICATION ENGINE FOR UNIT-RAYLEIGH REGRESSION (URRM)
-# High-Dimensional (p > n) and Multicollinearity Extension (rho = 0, 0.5, 0.8, 0.9, 0.95)
-# Outputs: 5 CSV Tables & 6 Corrected High-Resolution Figures (300 DPI)
-# Directory: C:\Users\Dr. O. J. Obulezi\Documents\R projects\URRM-modified
-# ==============================================================================
+# EXPANDED SIMULATION ENGINE FOR UNIT-RAYLEIGH REGRESSION (URRM)
+
 
 work_dir <- "C:\\Users\\Dr. O. J. Obulezi\\Documents\\R projects\\URRM-modified"
 if (!dir.exists(work_dir)) dir.create(work_dir, recursive = TRUE)
@@ -150,24 +147,29 @@ fit_urrm <- function(X, y, link = "loglog", method = "scad", tau = 0.5, lambda =
 }
 
 # ------------------------------------------------------------------------------
-# 3. EXPANDED MONTE CARLO SIMULATION WITH MULTICOLLINEARITY (RHO = 0 to 0.95)
+# 3. EXPANDED MONTE CARLO SIMULATION SETUP (MULTI-N, MULTI-P, SPARSITY, TAU)
 # ------------------------------------------------------------------------------
 set.seed(2026)
-tau_level <- 0.5
 n_replications <- 10
 
+# Expanded Scenarios: Varying n, p, and Sparsity (s)
 scenarios <- list(
-  "Low_Dim"  = list(n = 100, p = 20, s = 4),
-  "High_Dim" = list(n = 50,  p = 100, s = 4)
+  "Low_Dim"       = list(n = 100, p = 20,  s = 4),   # p/n = 0.2
+  "Moderate_HD"   = list(n = 100, p = 200, s = 8),   # p/n = 2.0
+  "Extreme_HD"    = list(n = 50,  p = 100, s = 4),   # p/n = 2.0
+  "Ultra_HD"      = list(n = 50,  p = 250, s = 10)   # p/n = 5.0
 )
 
 rhos <- c(0.00, 0.50, 0.80, 0.90, 0.95)
+taus <- c(0.10, 0.25, 0.50, 0.75, 0.90) # Target quantiles
 links <- c("loglog", "logit", "probit", "cauchy")
 estimators <- c("HD-IURLRE", "lasso", "enet", "scad")
 
+# Primary Simulation Grid across Regimes & Multicollinearity
 sim_grid <- expand.grid(
   Scenario = names(scenarios),
   Rho = rhos,
+  Tau = 0.50, # Primary baseline quantile
   Replication = 1:n_replications,
   Link = links,
   Estimator = estimators,
@@ -178,7 +180,7 @@ sim_results <- sim_grid %>%
   mutate(MSE = 0, Bias = 0, Active = 0, TPR = 0, FPR = 0, Time_ms = 0)
 
 cat("==============================================================================\n")
-cat("EXECUTING MULTICOLLINEAR EXPERIMENTAL SUITE (RHO = 0, 0.5, 0.8, 0.9, 0.95)...\n")
+cat("EXECUTING EXPANDED MULTI-DIMENSIONAL EXPERIMENTAL SUITE...\n")
 cat("==============================================================================\n")
 
 total_tasks <- nrow(sim_results)
@@ -187,19 +189,21 @@ for (i in 1:total_tasks) {
   sc <- scenarios[[sc_name]]
   n_samples <- sc$n
   p_features <- sc$p
+  s_signals <- sc$s
   r_val <- sim_results$Rho[i]
+  t_val <- sim_results$Tau[i]
   
-  rep_idx <- sim_results$Replication[i]
   l <- sim_results$Link[i]
   m <- sim_results$Estimator[i]
   
-  cat(sprintf("\r Progress: [%d/%d] | Scen: %-8s | Rho: %.2f | Link: %-6s | Method: %-6s", 
+  cat(sprintf("\r Progress: [%d/%d] | Scen: %-11s | Rho: %.2f | Link: %-6s | Method: %-6s", 
               i, total_tasks, sc_name, r_val, l, m))
   flush.console()
   
-  beta_true <- c(0.8, -0.6, 0.5, -0.4, rep(0, p_features - 4))
+  # Generate true sparse parameter vector
+  beta_true <- c(seq(0.8, 0.4, length.out = s_signals), rep(0, p_features - s_signals))
   
-  # Generate Toeplitz Covariance Matrix for Multicollinearity
+  # Toeplitz Covariance Matrix
   Sigma <- r_val ^ abs(outer(1:p_features, 1:p_features, "-"))
   L_mat <- chol(Sigma)
   Z_raw <- matrix(rnorm(n_samples * p_features), nrow = n_samples, ncol = p_features)
@@ -207,24 +211,24 @@ for (i in 1:total_tasks) {
   X_sim <- scale(X_raw) / sqrt(p_features)
   
   mu_sim <- compute_mu(as.vector(X_sim %*% beta_true), link = l)
-  y_sim <- qUR(runif(n_samples), mu_sim, tau = tau_level)
+  y_sim <- qUR(runif(n_samples), mu_sim, tau = t_val)
   
   t_start <- Sys.time()
-  b_est <- fit_urrm(X_sim, y_sim, link = l, method = m, tau = tau_level, lambda = 0.02)
+  b_est <- fit_urrm(X_sim, y_sim, link = l, method = m, tau = t_val, lambda = 0.02)
   t_end <- Sys.time()
   
   sim_results$MSE[i] <- mean((b_est - beta_true)^2)
   sim_results$Bias[i] <- mean(b_est - beta_true)
   sim_results$Active[i] <- sum(b_est != 0)
-  sim_results$TPR[i] <- sum(b_est[1:4] != 0) / 4
-  sim_results$FPR[i] <- sum(b_est[5:p_features] != 0) / (p_features - 4)
+  sim_results$TPR[i] <- sum(b_est[1:s_signals] != 0) / s_signals
+  sim_results$FPR[i] <- sum(b_est[(s_signals + 1):p_features] != 0) / (p_features - s_signals)
   sim_results$Time_ms[i] <- as.numeric(difftime(t_end, t_start, units = "secs")) * 1000
 }
 
-cat("\n\n✓ Multicollinearity Monte Carlo Simulations Completed!\n\n")
+cat("\n\n✓ Multi-Dimensional Monte Carlo Simulations Completed!\n\n")
 
 # ------------------------------------------------------------------------------
-# 4. EXPORT ALL 5 CSV TABLES (ORIGINAL FILENAMES PRESERVED)
+# 4. EXPORT ALL 5 CSV TABLES (UPDATED WITH EXPANDED METRICS)
 # ------------------------------------------------------------------------------
 
 table_1 <- sim_results %>%
@@ -242,26 +246,28 @@ table_3 <- sim_results %>%
   summarise(Avg_Time_ms = round(mean(Time_ms), 2), SD_Time_ms = round(sd(Time_ms), 2), .groups = "drop")
 write.csv(table_3, "Table_3_Numerical_Efficiency.csv", row.names = FALSE)
 
-set.seed(2026)
+# Table 4: Multi-Regime Design Summary
+table_4 <- data.frame(
+  Regime = names(scenarios),
+  Sample_Size_n = sapply(scenarios, function(x) x$n),
+  Features_p = sapply(scenarios, function(x) x$p),
+  HD_Ratio_p_n = sapply(scenarios, function(x) x$p / x$n),
+  Signal_Sparsity_s = sapply(scenarios, function(x) x$s),
+  Multicollinearity_rho = "0.00, 0.50, 0.80, 0.90, 0.95",
+  Target_Quantiles_tau = "0.10, 0.25, 0.50, 0.75, 0.90"
+)
+write.csv(table_4, "Table_4_Simulation_Design_Summary.csv", row.names = FALSE)
+
+# Table 5: Information Criteria Model Comparison (Extreme_HD Baseline)
 Sigma_hd <- 0.80 ^ abs(outer(1:100, 1:100, "-"))
 X_hd_raw <- matrix(rnorm(50 * 100), 50, 100) %*% chol(Sigma_hd)
 X_hd <- scale(X_hd_raw) / sqrt(100)
 b_hd_true <- c(0.8, -0.6, 0.5, -0.4, rep(0, 96))
 y_hd <- qUR(runif(50), compute_mu(as.vector(X_hd %*% b_hd_true), "loglog"), tau = 0.5)
 
-table_4 <- data.frame(
-  Metric = c("Sample Size (n)", "Features (p)", "Signal Predictors", "Multicollinearity Levels (rho)", "Response Mean", "Response SD", "Response Median", "Response Min", "Response Max"),
-  Value = c("50", "100", "4", "0.00, 0.50, 0.80, 0.90, 0.95", round(mean(y_hd), 4), round(sd(y_hd), 4), round(median(y_hd), 4), round(min(y_hd), 4), round(max(y_hd), 4))
-)
-write.csv(table_4, "Table_4_Simulation_Design_Summary.csv", row.names = FALSE)
-
 table_5_grid <- expand.grid(Link = links, Estimator = estimators, stringsAsFactors = FALSE)
-table_5_grid$LogLik <- 0
-table_5_grid$AIC <- 0
-table_5_grid$BIC <- 0
-table_5_grid$HQIC <- 0
-table_5_grid$Deviance <- 0
-table_5_grid$Active_df <- 0
+table_5_grid$LogLik <- 0; table_5_grid$AIC <- 0; table_5_grid$BIC <- 0
+table_5_grid$HQIC <- 0; table_5_grid$Deviance <- 0; table_5_grid$Active_df <- 0
 
 for (i in 1:nrow(table_5_grid)) {
   l <- table_5_grid$Link[i]
@@ -284,20 +290,21 @@ for (i in 1:nrow(table_5_grid)) {
 table_5_grid <- table_5_grid %>% arrange(AIC)
 write.csv(table_5_grid, "Table_5_Simulation_Model_Selection_Criteria.csv", row.names = FALSE)
 
-cat("✓ All 5 CSV Tables successfully saved with original filenames.\n\n")
+cat("✓ All 5 CSV Tables successfully generated.\n\n")
 
 # ------------------------------------------------------------------------------
-# 5. GENERATE HIGH-RESOLUTION PNG FIGURES (ORIGINAL FILENAMES, NO MAIN TITLES)
+# 5. GENERATE HIGH-RESOLUTION FIGURES (NO MAIN TITLES, 300 DPI)
 # ------------------------------------------------------------------------------
 
-# FIGURE 1: MSE Boxplots across Multicollinearity Levels
-f1 <- ggplot(sim_results %>% filter(Scenario == "High_Dim"), aes(x = factor(Rho), y = MSE, fill = Estimator)) +
-  geom_boxplot(alpha = 0.8, outlier.size = 0.8) +
-  facet_wrap(~ Link, scales = "free_y") +
-  theme_bw() + labs(title = NULL, x = "Multicollinearity Level (Rho)", y = "Mean Squared Error")
-ggsave("Figure_1_MSE_Performance.png", f1, width = 10, height = 6.5, dpi = 300)
+# FIGURE 1: MSE Boxplots across Regimes and Multicollinearity Levels
+f1 <- ggplot(sim_results, aes(x = factor(Rho), y = MSE, fill = Estimator)) +
+  geom_boxplot(alpha = 0.8, outlier.size = 0.6) +
+  facet_grid(Link ~ Scenario, scales = "free_y") +
+  theme_bw() + 
+  labs(title = NULL, x = "Multicollinearity Level (Rho)", y = "Mean Squared Error (MSE)")
+ggsave("Figure_1_MSE_Performance.png", f1, width = 12, height = 8, dpi = 300)
 
-# FIGURE 2: SCAD Regularization Paths for ALL 100 Features (p = 100 > n = 50, rho = 0.80)
+# FIGURE 2: SCAD Regularization Trajectory for p = 100 Features
 lambdas <- exp(seq(log(0.001), log(0.15), length.out = 25))
 path_list <- list()
 for (idx in length(lambdas):1) {
@@ -330,7 +337,7 @@ f2 <- ggplot(path_df, aes(x = Lambda, y = Beta, group = FeatureID, color = Type,
   labs(title = NULL, x = "Penalty Parameter Log(Lambda)", y = "Estimated Beta (100 Features)", color = "Feature Group")
 ggsave("Figure_2_Regularization_Paths.png", f2, width = 8.5, height = 4.8, dpi = 300)
 
-# FIGURE 3: RESIDUAL DIAGNOSTICS (High-Dimensional Multicollinear Regime)
+# FIGURE 3: RESIDUAL DIAGNOSTICS
 b_hd_iurlre <- fit_hd_iurlre(X_hd, y_hd, tau = 0.5, link = "loglog")
 mu_diag <- compute_mu(as.vector(X_hd %*% b_hd_iurlre), link = "loglog")
 
@@ -358,7 +365,7 @@ p_res2 <- ggplot(df_diag, aes(sample = RQ_Residuals)) +
 f3 <- grid.arrange(p_res1, p_res2, ncol = 2)
 ggsave("Figure_3_Residual_Diagnostics.png", f3, width = 10, height = 4.2, dpi = 300)
 
-# FIGURE 4: Leverage & Influence (p = 100, n = 50, rho = 0.80)
+# FIGURE 4: Leverage & Influence Diagnostics
 H <- X_hd %*% solve(t(X_hd) %*% X_hd + 0.1 * diag(100)) %*% t(X_hd)
 lev <- diag(H)
 cooks <- (rq_residuals^2 / 100) * (lev / (1 - lev)^2)
@@ -369,7 +376,7 @@ p_inf2 <- ggplot(f4_df, aes(x = Index, y = Cooks_D)) + geom_segment(aes(xend = I
 f4 <- grid.arrange(p_inf1, p_inf2, ncol = 2)
 ggsave("Figure_4_Leverage_CooksD.png", f4, width = 10, height = 4.2, dpi = 300)
 
-# FIGURE 5: PAIRED SIMULATION FIT (p > n, rho = 0.80)
+# FIGURE 5: PAIRED SIMULATION FIT
 f5_df <- data.frame(Fitted = mu_diag, Observed = y_hd) %>%
   arrange(Fitted) %>%
   mutate(Obs = 1:n())
@@ -385,10 +392,10 @@ ggsave("Figure_5_Empirical_Fit.png", f5, width = 8, height = 4.8, dpi = 300)
 # FIGURE 6: Computation Time Efficiency across Regimes
 f6 <- ggplot(sim_results, aes(x = Estimator, y = Time_ms, fill = Link)) +
   geom_bar(stat = "summary", fun = "mean", position = "dodge") +
-  facet_wrap(~ Scenario, scales = "free_y") +
-  theme_bw() + labs(title = NULL, y = "Execution Time (ms)", x = "Estimator")
-ggsave("Figure_6_Computation_Efficiency.png", f6, width = 9, height = 4.8, dpi = 300)
+  facet_wrap(~ Scenario, scales = "free_y", ncol = 2) +
+  theme_bw() + labs(title = NULL, y = "Execution Time (ms)", x = "Estimator Architecture")
+ggsave("Figure_6_Computation_Efficiency.png", f6, width = 10, height = 6.5, dpi = 300)
 
 cat("\n==============================================================================\n")
-cat("SUCCESS! Multicollinearity Simulation Complete.\n")
+cat("SUCCESS! Fully Expanded Simulation Suite Completed.\n")
 cat("==============================================================================\n")
