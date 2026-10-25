@@ -1,9 +1,6 @@
 # ==============================================================================
 # EXPANDED SIMULATION ENGINE FOR UNIT-RAYLEIGH REGRESSION (URRM)
-# Addresses Reviewer Comments: Expands (n, p), Sparsity, Rho, and Quantiles (tau)
-# Outputs: 5 Updated CSV Tables & 6 High-Resolution Figures (300 DPI)
-# Directory: C:\Users\Dr. O. J. Obulezi\Documents\R projects\URRM-modified
-# ==============================================================================
+
 
 work_dir <- "C:\\Users\\Dr. O. J. Obulezi\\Documents\\R projects\\URRM-modified"
 if (!dir.exists(work_dir)) dir.create(work_dir, recursive = TRUE)
